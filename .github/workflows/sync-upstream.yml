@@ -1,0 +1,73 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+env:
+  UPSTREAM_URL: "https://github.com/torvalds/linux.git"
+  UPSTREAM_BRANCH: "master"
+  DOWNSTREAM_BRANCH: "master"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout downstream repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream ${{ env.UPSTREAM_URL }}
+          git fetch upstream ${{ env.UPSTREAM_BRANCH }}
+
+      - name: Check for new commits
+        id: check
+        run: |
+          LOCAL=$(git rev-parse ${{ env.DOWNSTREAM_BRANCH }})
+          REMOTE=$(git rev-parse upstream/${{ env.UPSTREAM_BRANCH }})
+          echo "local=$LOCAL" >> $GITHUB_OUTPUT
+          echo "remote=$REMOTE" >> $GITHUB_OUTPUT
+          if [ "$LOCAL" = "$REMOTE" ]; then
+            echo "has_new_commits=false" >> $GITHUB_OUTPUT
+            echo "No new commits to sync."
+          else
+            echo "has_new_commits=true" >> $GITHUB_OUTPUT
+            echo "New commits found: $LOCAL -> $REMOTE"
+          fi
+
+      - name: Merge upstream changes
+        if: steps.check.outputs.has_new_commits == 'true'
+        run: |
+          git checkout ${{ env.DOWNSTREAM_BRANCH }}
+          git merge --no-edit upstream/${{ env.UPSTREAM_BRANCH }}
+
+      - name: Push to downstream
+        if: steps.check.outputs.has_new_commits == 'true'
+        run: |
+          git push origin ${{ env.DOWNSTREAM_BRANCH }}
+
+      - name: Create sync summary
+        if: steps.check.outputs.has_new_commits == 'true'
+        run: |
+          echo "## Upstream Sync Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Upstream**: ${{ env.UPSTREAM_URL }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: ${{ env.UPSTREAM_BRANCH }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Previous commit**: ${{ steps.check.outputs.local }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **New commit**: ${{ steps.check.outputs.remote }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Commits synced:" >> $GITHUB_STEP_SUMMARY
+          git log --oneline ${{ steps.check.outputs.local }}..${{ steps.check.outputs.remote }} >> $GITHUB_STEP_SUMMARY
