@@ -873,13 +873,14 @@ static void nft_payload_set_eval(const struct nft_expr *expr,
 	csum_offset = offset + priv->csum_offset;
 	offset += priv->offset;
 
+	/* Always validate that we're writing within the skb bounds */
+	if (offset + priv->len > skb->len)
+		goto err;
+
 	if ((priv->csum_type == NFT_PAYLOAD_CSUM_INET || priv->csum_flags) &&
 	    ((priv->base != NFT_PAYLOAD_TRANSPORT_HEADER &&
 	      priv->base != NFT_PAYLOAD_INNER_HEADER) ||
 	     skb->ip_summed != CHECKSUM_PARTIAL)) {
-		if (offset + priv->len > skb->len)
-			goto err;
-
 		fsum = skb_checksum(skb, offset, priv->len, 0);
 		tsum = csum_partial(src, priv->len, 0);
 
