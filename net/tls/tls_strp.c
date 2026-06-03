@@ -533,6 +533,8 @@ static int tls_strp_read_sock(struct tls_strparser *strp)
 
 		if (!strp->stm.full_len || inq < strp->stm.full_len)
 			return tls_strp_read_copy(strp, true);
+	} else {
+		tls_strp_load_anchor_with_queue(strp, inq);
 	}
 
 	if (!tls_strp_check_queue_ok(strp))

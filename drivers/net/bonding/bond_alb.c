@@ -253,6 +253,11 @@ static void rlb_update_entry_from_arp(struct bonding *bond, struct arp_pkt *arp)
 
 	spin_lock_bh(&bond->mode_lock);
 
+	if (!bond_info->rx_hashtbl) {
+		spin_unlock_bh(&bond->mode_lock);
+		return;
+	}
+
 	hash_index = _simple_hash((u8 *)&(arp->ip_src), sizeof(arp->ip_src));
 	client_info = &(bond_info->rx_hashtbl[hash_index]);
 
@@ -273,6 +278,7 @@ static int rlb_arp_recv(const struct sk_buff *skb, struct bonding *bond,
 			struct slave *slave)
 {
 	struct arp_pkt *arp, _arp;
+	struct alb_bond_info *bond_info = &(BOND_ALB_INFO(bond));
 
 	if (skb->protocol != cpu_to_be16(ETH_P_ARP))
 		goto out;
@@ -280,6 +286,14 @@ static int rlb_arp_recv(const struct sk_buff *skb, struct bonding *bond,
 	arp = skb_header_pointer(skb, 0, sizeof(_arp), &_arp);
 	if (!arp)
 		goto out;
+
+	/* Check if rx_hashtbl is still valid */
+	spin_lock_bh(&bond->mode_lock);
+	if (!bond_info->rx_hashtbl) {
+		spin_unlock_bh(&bond->mode_lock);
+		goto out;
+	}
+	spin_unlock_bh(&bond->mode_lock);
 
 	/* We received an ARP from arp->ip_src.
 	 * We might have used this IP address previously (on the bonding host
@@ -839,6 +853,11 @@ static void rlb_purge_src_ip(struct bonding *bond, struct arp_pkt *arp)
 
 	spin_lock_bh(&bond->mode_lock);
 
+	if (!bond_info->rx_hashtbl) {
+		spin_unlock_bh(&bond->mode_lock);
+		return;
+	}
+
 	index = bond_info->rx_hashtbl[ip_src_hash].src_first;
 	while (index != RLB_NULL_INDEX) {
 		struct rlb_client_info *entry = &(bond_info->rx_hashtbl[index]);
@@ -885,7 +904,13 @@ static void rlb_deinitialize(struct bonding *bond)
 	struct alb_bond_info *bond_info = &(BOND_ALB_INFO(bond));
 
 	spin_lock_bh(&bond->mode_lock);
+	bond->recv_probe = NULL;
+	spin_unlock_bh(&bond->mode_lock);
 
+	/* Wait for any ongoing rlb_arp_recv calls to complete */
+	synchronize_net();
+
+	spin_lock_bh(&bond->mode_lock);
 	kfree(bond_info->rx_hashtbl);
 	bond_info->rx_hashtbl = NULL;
 	bond_info->rx_hashtbl_used_head = RLB_NULL_INDEX;
